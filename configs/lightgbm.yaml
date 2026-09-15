@@ -1,0 +1,30 @@
+experiment: lightgbm_reference
+model:
+  type: lightgbm
+data:
+  split_scheme: ecfp_cluster
+  cyps: [CYP1A2, CYP2C9, CYP2D6, CYP3A4]
+featurization:
+  policy: fail
+features:
+  morgan_radius: 3
+  morgan_bits: 2048
+  rdkit_physicochemical: true
+lightgbm:
+  objective: regression_l1
+  n_estimators: 1200
+  learning_rate: 0.03
+  num_leaves: 63
+  min_child_samples: 20
+  subsample: 0.90
+  colsample_bytree: 0.80
+  reg_lambda: 1.0
+loss:
+  loss_mode: standard
+  weight_clip_min: 0.2
+  weight_clip_max: 5.0
+reproducibility:
+  deterministic: true
+walltime:
+  initial_target_estimate_seconds: 120
+  safety_margin_seconds: 60
