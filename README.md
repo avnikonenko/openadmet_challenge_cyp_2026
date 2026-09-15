@@ -33,31 +33,44 @@ python scripts/train_lightgbm.py --config configs/lightgbm.yaml --fold 0 --seed 
 python scripts/train_multitask.py --config configs/chemprop_multitask.yaml --fold 0 --seed 42 --device cuda:0 --max-runtime-minutes 50
 ```
 
-3. CYP2D6 single-task control:
+3. Official Chemprop v2 masked-multitask baseline:
+
+```bash
+python scripts/train_chemprop_official.py --config configs/chemprop_official_multitask.yaml --fold 0 --seed 42 --device cuda:0
+```
+
+This is the genuine upstream Chemprop 2.2.1 CLI implementation. It is separate
+from the project-native D-MPNN above and uses the pinned PyTorch 2.3–2.5 range.
+Its native CLI cannot safely resume an interrupted optimizer/scheduler state, so
+rerun an interrupted official-Chemprop job with a new run identity; all project-native
+D-MPNN jobs support `--resume`. It also rejects `--max-runtime-minutes`, because
+native Chemprop 2.2 cannot stop cleanly at an epoch boundary and restore that state.
+
+4. CYP2D6 single-task control:
 
 ```bash
 python scripts/train_chemprop.py --config configs/chemprop_multitask.yaml --cyp CYP2D6 --fold 0 --seed 42 --device cuda:0
 ```
 
-4. Fold-safe single-concentration pretraining:
+5. Fold-safe single-concentration pretraining:
 
 ```bash
 python scripts/pretrain_single_conc.py --config configs/transfer_singleconc.yaml --fold 0 --seed 42 --device cuda:0 --max-runtime-minutes 50
 ```
 
-5. Full fine-tuning to direct pIC50:
+6. Full fine-tuning to direct pIC50:
 
 ```bash
 python scripts/finetune_pic50.py --config configs/transfer_singleconc.yaml --checkpoint outputs/singleconc_pretrain/fold0/seed42/checkpoints/best.pt --transfer-mode full --fold 0 --seed 42 --device cuda:0 --max-runtime-minutes 50
 ```
 
-6. Freeze-then-unfreeze transfer:
+7. Freeze-then-unfreeze transfer:
 
 ```bash
 python scripts/finetune_pic50.py --config configs/transfer_singleconc.yaml --checkpoint outputs/singleconc_pretrain/fold0/seed42/checkpoints/best.pt --transfer-mode freeze_then_unfreeze --fold 0 --seed 42 --device cuda:0 --max-runtime-minutes 50
 ```
 
-7. Five-fold, multi-seed GPU queue:
+8. Five-fold, multi-seed GPU queue:
 
 ```bash
 python scripts/run_matrix.py --script scripts/train_multitask.py --config configs/chemprop_multitask.yaml --folds 0 1 2 3 4 --seeds 1 2 3 --devices 0 1 2 3 4 5 6 7 --output-dir outputs --max-runtime-minutes 50

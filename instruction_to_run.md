@@ -52,14 +52,29 @@ the smoke run nor its logs; they are the environment audit trail.
 
 ## 3. Recommended first production matrix
 
-Use five ECFP-cluster folds and seeds `1 2 3`. Start with these three model families:
+Use five ECFP-cluster folds and seeds `1 2 3`. Start with these four model families:
 
 1. LightGBM reference: CPU, per CYP.
 2. Direct masked multitask D-MPNN: GPU.
-3. Single-concentration-pretrained D-MPNN followed by full fine-tuning: GPU.
+3. Official Chemprop 2.2.1 masked multitask baseline: GPU.
+4. Single-concentration-pretrained D-MPNN followed by full fine-tuning: GPU.
 
 Run the freeze-then-unfreeze transfer variant only after the full-transfer runs have
 completed and been evaluated. Do not use the YAML search grid for the first matrix.
+
+The official Chemprop baseline is intentionally independent of the native D-MPNN:
+
+```bash
+python scripts/preflight.py --config configs/chemprop_official_multitask.yaml --device cuda:0 --output-dir outputs
+python scripts/train_chemprop_official.py --config configs/chemprop_official_multitask.yaml --fold 0 --seed 42 --device cuda:0 --output-dir outputs
+```
+
+It uses the upstream Chemprop 2.2.1 CLI and the pinned PyTorch 2.3–2.5 range in
+the supplied environments. Chemprop’s v2.2 CLI does not restore native optimizer
+and scheduler state, so do not pass `--resume` to this script; choose a new run name
+after an interruption. It also rejects `--max-runtime-minutes`; request enough walltime
+for the configured epoch budget. The native D-MPNN scripts do support exact `--resume`
+and walltime-safe stopping.
 
 ## 4. Single-node, eight-GPU launcher
 
