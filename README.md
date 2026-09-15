@@ -119,8 +119,12 @@ python scripts/make_submission.py --predictions outputs/final_ensemble/test_ense
 python scripts/leaderboard.py --input outputs --output outputs/experiment_leaderboard.csv
 ```
 
-This also writes `outputs/experiment_leaderboard_aggregated.csv` across folds and
-seeds.
+Every completed training run updates this same CSV automatically. The registry keeps
+one row per run/CYP, includes per-run and CV aggregate metrics, hyperparameters,
+resource usage, status, paths, and UTC run/registration timestamps. Updates use a
+file lock and atomic replacement, so independent cluster jobs can finish concurrently.
+Rerunning the command refreshes existing rows and adds newly discovered models without
+duplicating earlier runs.
 
 ## Reproducibility and run layout
 

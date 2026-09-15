@@ -201,9 +201,11 @@ python scripts/evaluate.py --input outputs/lightgbm_reference --aggregate-oof
 python scripts/leaderboard.py --input outputs --output outputs/experiment_leaderboard.csv
 ```
 
-Before choosing a final family or ensemble, inspect `missing_folds.csv`, `run_status.csv`,
-the aggregate leaderboard, and every run's `metadata.json`. Do not select on blinded
-test predictions.
+Completed jobs update `outputs/experiment_leaderboard.csv` automatically. Manual use
+rescans the output tree and safely upserts old and new run/CYP rows with timestamps;
+it does not create a second aggregate CSV. Before choosing a final family or ensemble,
+inspect `missing_folds.csv`, `run_status.csv`, the consolidated leaderboard, and every
+run's `metadata.json`. Do not select on blinded test predictions.
 
 ## 9. Blinded test predictions, ensemble, and submission
 
