@@ -1,0 +1,20 @@
+# Generated modelling outputs and local runtime state
+outputs/
+submissions/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.matplotlib/
+
+# Codex/session and local Git metadata
+.agents/
+.codex/
+.git.openadmet/
+__codex_resume*.md
+
+# Challenge inputs and reproducible derived analysis artifacts
+cyp-challenge-train-test/
+analysis/**/cache/
+analysis/**/figures/
+analysis/**/tables/
+analysis/**/tables.tar.xz
