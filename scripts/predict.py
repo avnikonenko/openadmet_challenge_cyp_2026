@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pickle
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
@@ -12,7 +16,7 @@ import pandas as pd
 import _bootstrap  # noqa: F401
 from models.multitask_gnn import batch_graphs
 from models.transfer_model import validate_encoder_checkpoint
-from src.constants import FEATURE_SCHEMA_VERSION
+from src.constants import DIRECT_TARGETS, FEATURE_SCHEMA_VERSION
 from src.data import load_test_frame
 from src.features import lightgbm_features
 from src.training import build_model
@@ -96,6 +100,67 @@ def predict_lightgbm(run_dir: Path, frame: pd.DataFrame, metadata: dict) -> pd.D
     return long_test_predictions(frame, tuple(task_names), np.column_stack(predictions), metadata)
 
 
+def _native_chemprop_checkpoint(run_dir: Path) -> Path:
+    candidates = sorted((run_dir / "chemprop").glob("model_*/best.pt"))
+    if len(candidates) != 1:
+        raise FileNotFoundError(
+            f"Expected exactly one native Chemprop best.pt under {run_dir / 'chemprop'}; "
+            f"found {candidates}"
+        )
+    return candidates[0]
+
+
+def _native_chemprop_tasks(run_dir: Path) -> tuple[str, ...]:
+    import torch
+
+    checkpoint_path = _native_chemprop_checkpoint(run_dir)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    target_columns = tuple(checkpoint.get("output_columns", ()))
+    if not target_columns or any(target not in DIRECT_TARGETS for target in target_columns):
+        raise ValueError(f"Native Chemprop checkpoint has invalid output columns: {checkpoint_path}")
+    if "state_dict" not in checkpoint or "hyper_parameters" not in checkpoint:
+        raise ValueError(f"Native Chemprop checkpoint lacks required architecture state: {checkpoint_path}")
+    return tuple(target.split("_pIC50_", 1)[0] for target in target_columns)
+
+
+def predict_native_chemprop(run_dir: Path, frame: pd.DataFrame, device: str, metadata: dict) -> pd.DataFrame:
+    executable = shutil.which("chemprop") or str(Path(sys.executable).with_name("chemprop"))
+    if not Path(executable).is_file():
+        raise RuntimeError("Official Chemprop executable is unavailable in the active environment")
+    checkpoint_path = _native_chemprop_checkpoint(run_dir)
+    task_names = _native_chemprop_tasks(run_dir)
+    input_path = run_dir / "chemprop_test_input.csv"
+    native_prediction_path = run_dir / "chemprop_test_predictions.csv"
+    pd.DataFrame(
+        {"Molecule_Name": frame["Molecule_Name"], "SMILES": frame["canonical_smiles"]}
+    ).to_csv(input_path, index=False)
+    command = [
+        executable, "predict", "--test-path", str(input_path), "--preds-path", str(native_prediction_path),
+        "--model-paths", str(checkpoint_path), "--smiles-columns", "SMILES",
+    ]
+    normalized = normalize_device(device)
+    if normalized.startswith("cuda"):
+        command.extend(["--accelerator", "gpu", "--devices", normalized.split(":", 1)[1]])
+    else:
+        command.extend(["--accelerator", "cpu", "--devices", "1"])
+    environment = dict(os.environ)
+    environment["MPLCONFIGDIR"] = str(run_dir / ".matplotlib")
+    (run_dir / ".matplotlib").mkdir(exist_ok=True)
+    subprocess.run(command, check=True, env=environment)
+    native_predictions = pd.read_csv(native_prediction_path)
+    expected_columns = tuple(f"{task}_pIC50_direct_inhibition" for task in task_names)
+    missing = set(expected_columns) - set(native_predictions)
+    if missing:
+        raise ValueError(f"Native Chemprop prediction output lacks columns: {sorted(missing)}")
+    merged = frame.loc[:, ["Molecule_Name", "canonical_smiles"]].merge(
+        native_predictions, on="Molecule_Name", how="left", validate="one_to_one"
+    )
+    values = merged.loc[:, expected_columns].to_numpy(dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError("Native Chemprop produced non-finite test predictions")
+    return long_test_predictions(merged, task_names, values, metadata)
+
+
 def _validate_existing_predictions(
     prediction_path: Path, run_dir: Path, frame: pd.DataFrame, output_dir: Path,
     task_names: tuple[str, ...],
@@ -120,6 +185,10 @@ def _validate_existing_predictions(
 
 
 def _checkpoint_hashes(run_dir: Path) -> dict[str, str]:
+    native_checkpoint = run_dir / "chemprop"
+    if native_checkpoint.exists():
+        path = _native_chemprop_checkpoint(run_dir)
+        return {str(path.relative_to(run_dir)): file_sha256(path)}
     checkpoints = run_dir / "checkpoints"
     paths = [checkpoints / "best.pt"] if (checkpoints / "best.pt").exists() else sorted(
         checkpoints.glob("CYP*.pkl")
@@ -143,6 +212,8 @@ def _checkpoint_task_names(run_dir: Path, model_type: str) -> tuple[str, ...]:
         if not tasks:
             raise FileNotFoundError(f"No LightGBM checkpoints in {run_dir / 'checkpoints'}")
         return tuple(tasks)
+    if model_type == "chemprop_official_v2":
+        return _native_chemprop_tasks(run_dir)
     import torch
 
     checkpoint_path = run_dir / "checkpoints" / "best.pt"
@@ -216,6 +287,8 @@ def main() -> int:
     predictions = (
         predict_lightgbm(run_dir, frame, metadata)
         if model_type == "lightgbm"
+        else predict_native_chemprop(run_dir, frame, args.device, metadata)
+        if model_type == "chemprop_official_v2"
         else predict_dmpnn(run_dir, frame, args.device, args.batch_size, metadata)
     )
     task_names = tuple(sorted(predictions["CYP"].unique()))

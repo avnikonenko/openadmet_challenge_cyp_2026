@@ -39,6 +39,11 @@ def main() -> int:
     try:
         config = load_config(args.config)
         load_direct_data(config.get("data", {}).get("split_scheme", "ecfp_cluster"), 0)
+        if config.get("model", {}).get("type") == "chemprop_official_v2":
+            import chemprop
+
+            if chemprop.__version__ != "2.2.1":
+                raise ValueError(f"expected Chemprop 2.2.1, found {chemprop.__version__}")
     except Exception as exc:
         failures.append(f"data/fold validation: {type(exc).__name__}: {exc}")
         config = None
@@ -56,14 +61,21 @@ def main() -> int:
         failures.append(f"output directory is not writable: {exc}")
     if args.checkpoint and config:
         try:
-            import torch
+            if config.get("model", {}).get("type") == "chemprop_official_v2":
+                import torch
 
-            checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-            tasks = tuple(checkpoint.get("task_names", ()))
-            if not tasks:
-                raise ValueError("checkpoint has no task list")
-            model = build_model(tasks, config)
-            load_encoder_weights(model, args.checkpoint, config.get("model", {}), partial_load=False)
+                checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+                if not checkpoint.get("output_columns") or "state_dict" not in checkpoint:
+                    raise ValueError("native Chemprop checkpoint lacks output columns or state")
+            else:
+                import torch
+
+                checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+                tasks = tuple(checkpoint.get("task_names", ()))
+                if not tasks:
+                    raise ValueError("checkpoint has no task list")
+                model = build_model(tasks, config)
+                load_encoder_weights(model, args.checkpoint, config.get("model", {}), partial_load=False)
         except Exception as exc:
             failures.append(f"checkpoint compatibility: {type(exc).__name__}: {exc}")
     if failures:
@@ -76,8 +88,13 @@ def main() -> int:
         f"rdkit={metadata.get('rdkit')} device={device} data/folds=valid output=writable"
     )
     if args.run_smoke:
+        script = (
+            "scripts/train_chemprop_official.py"
+            if config and config.get("model", {}).get("type") == "chemprop_official_v2"
+            else "scripts/train_multitask.py"
+        )
         command = [
-            sys.executable, "scripts/train_multitask.py", "--config", str(args.config),
+            sys.executable, script, "--config", str(args.config),
             "--fold", "0", "--seed", "42", "--device", args.device,
             "--output-dir", str(args.output_dir), "--experiment", "preflight_smoke",
             "--run-name", f"run_{time.time_ns()}", "--smoke-test",
