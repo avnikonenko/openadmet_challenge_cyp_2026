@@ -123,14 +123,16 @@ def _native_chemprop_tasks(run_dir: Path) -> tuple[str, ...]:
     return tuple(target.split("_pIC50_", 1)[0] for target in target_columns)
 
 
-def predict_native_chemprop(run_dir: Path, frame: pd.DataFrame, device: str, metadata: dict) -> pd.DataFrame:
+def predict_native_chemprop(
+    run_dir: Path, frame: pd.DataFrame, device: str, metadata: dict, output_dir: Path,
+) -> pd.DataFrame:
     executable = shutil.which("chemprop") or str(Path(sys.executable).with_name("chemprop"))
     if not Path(executable).is_file():
         raise RuntimeError("Official Chemprop executable is unavailable in the active environment")
     checkpoint_path = _native_chemprop_checkpoint(run_dir)
     task_names = _native_chemprop_tasks(run_dir)
-    input_path = run_dir / "chemprop_test_input.csv"
-    native_prediction_path = run_dir / "chemprop_test_predictions.csv"
+    input_path = output_dir / "chemprop_test_input.csv"
+    native_prediction_path = output_dir / "chemprop_test_predictions.csv"
     pd.DataFrame(
         {"Molecule_Name": frame["Molecule_Name"], "SMILES": frame["canonical_smiles"]}
     ).to_csv(input_path, index=False)
@@ -144,8 +146,8 @@ def predict_native_chemprop(run_dir: Path, frame: pd.DataFrame, device: str, met
     else:
         command.extend(["--accelerator", "cpu", "--devices", "1"])
     environment = dict(os.environ)
-    environment["MPLCONFIGDIR"] = str(run_dir / ".matplotlib")
-    (run_dir / ".matplotlib").mkdir(exist_ok=True)
+    environment["MPLCONFIGDIR"] = str(output_dir / ".matplotlib")
+    (output_dir / ".matplotlib").mkdir(exist_ok=True)
     subprocess.run(command, check=True, env=environment)
     native_predictions = pd.read_csv(native_prediction_path)
     expected_columns = tuple(f"{task}_pIC50_direct_inhibition" for task in task_names)
@@ -287,7 +289,7 @@ def main() -> int:
     predictions = (
         predict_lightgbm(run_dir, frame, metadata)
         if model_type == "lightgbm"
-        else predict_native_chemprop(run_dir, frame, args.device, metadata)
+        else predict_native_chemprop(run_dir, frame, args.device, metadata, output_dir)
         if model_type == "chemprop_official_v2"
         else predict_dmpnn(run_dir, frame, args.device, args.batch_size, metadata)
     )
