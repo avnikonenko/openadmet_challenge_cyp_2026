@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import ANALYSIS_TABLES, DATA_DIR
+from .model_registry import update_model_statistics
 from .utils import (
     RunContext, capture_environment, file_sha256, json_dump, require_yaml, resolve_run_dir,
     system_metadata, utc_now,
@@ -85,6 +86,7 @@ def begin_run(args: argparse.Namespace, config: dict[str, Any]) -> tuple[RunCont
         ),
         "fold": args.fold,
         "experiment": experiment,
+        "output_root": str(Path(args.output_dir).resolve()),
         "model_type": model_type,
         "chemprop_implementation": "self-contained-chemprop-style" if model_type == "dmpnn" else "not-applicable",
         "model_hyperparameters": model_hyperparameters,
@@ -142,3 +144,31 @@ def finish_run(
     run.log("run_finished", status=metadata["status"])
     if completed:
         run.mark_complete()
+        output_root_value = metadata.get("output_root")
+        if not output_root_value:
+            metadata["model_statistics_error"] = "Missing output_root in run metadata"
+            json_dump(metadata, run.run_dir / "metadata.json")
+            run.log("model_statistics_update_failed", error=metadata["model_statistics_error"])
+            print(
+                f"WARNING: model completed but statistics registry update failed: "
+                f"{metadata['model_statistics_error']}",
+                file=sys.stderr,
+            )
+            return
+        output_root = Path(output_root_value)
+        registry_path = output_root / "experiment_leaderboard.csv"
+        try:
+            statistics = update_model_statistics(output_root, registry_path)
+            run.log(
+                "model_statistics_updated",
+                registry=str(registry_path), rows=len(statistics),
+            )
+        except Exception as exc:
+            metadata["model_statistics_error"] = f"{type(exc).__name__}: {exc}"
+            json_dump(metadata, run.run_dir / "metadata.json")
+            run.log("model_statistics_update_failed", error=metadata["model_statistics_error"])
+            print(
+                f"WARNING: model completed but statistics registry update failed: "
+                f"{metadata['model_statistics_error']}",
+                file=sys.stderr,
+            )
