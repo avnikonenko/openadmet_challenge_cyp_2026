@@ -30,6 +30,22 @@ Random and Bemis–Murcko scaffold splits are retained as controls; the primary 
 use saved ECFP6 cluster folds. Model selection uses training/validation data only, while the
 blinded test set is reserved for final predictions.
 
+## Data availability
+
+This repository contains code, configurations, and derived methodology only. Challenge
+CSV files, model outputs, and submissions are intentionally excluded from version control.
+Obtain the data from the official
+[OpenADMET CYP challenge dataset](https://huggingface.co/datasets/openadmet/cyp-challenge-train-test)
+and place the checkout at `cyp-challenge-train-test/`:
+
+```bash
+git clone https://huggingface.co/datasets/openadmet/cyp-challenge-train-test cyp-challenge-train-test
+```
+
+The checkout remains an independent, ignored upstream dataset repository. Its commit
+history and contributors are not part of this project's Git history; retain the source
+repository and its license/provenance when using or redistributing the data.
+
 ## Quick start on cluster
 
 Create the CPU environment:
