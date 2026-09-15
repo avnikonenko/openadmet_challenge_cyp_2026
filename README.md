@@ -5,6 +5,31 @@ CLI-first modelling pipeline under `src/`, `models/`, `scripts/`, and `configs/`
 For the staged Slurm workflow, GPU pre-flight gate, array template, and recovery
 rules, see [instruction_to_run.md](instruction_to_run.md).
 
+## Project scope
+
+This project develops reproducible models for the OpenADMET CYP inhibition challenge.
+The main modelling task is direct-inhibition regression: predict pIC50 for CYP1A2,
+CYP2C9, CYP2D6, and CYP3A4 from molecular structure. The direct-inhibition dataset
+has sparse labels across CYPs, so missing targets are masked rather than treated as
+inactive. The challenge definition, auxiliary assays, and submission schema are
+documented in [task.md](task.md).
+
+We compare the following model families using saved chemistry-aware cross-validation
+folds and the official interval-aware ST-RAE metric:
+
+- LightGBM with Morgan (ECFP6, radius 3) fingerprints and RDKit physicochemical descriptors.
+- A project-native PyTorch Chemprop-style directed message-passing neural network (D-MPNN),
+  evaluated both as CYP-specific single-task models and as a masked multitask model with
+  one shared encoder and separate CYP output heads.
+- The official Chemprop v2 multitask baseline, kept separate from the native implementation.
+- Transfer-learning D-MPNNs pretrained on fold-safe single-concentration CYP inhibition,
+  then fine-tuned on direct pIC50 with either full fine-tuning or freeze-then-unfreeze.
+- Arithmetic and OOF-performance-weighted ensembles of completed model runs.
+
+Random and Bemis–Murcko scaffold splits are retained as controls; the primary experiments
+use saved ECFP6 cluster folds. Model selection uses training/validation data only, while the
+blinded test set is reserved for final predictions.
+
 ## Quick start on cluster
 
 Create the CPU environment:
