@@ -1,0 +1,21 @@
+name: openadmet-cyp-models-cuda
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  # Chemprop 2.2.1 reloads its native checkpoints with torch.load defaults that
+  # changed in PyTorch 2.6; keep the supported, reproducible range explicit.
+  - pytorch>=2.3,<2.6
+  - pytorch-cuda=12.1
+  - lightgbm>=4.3,<5
+  - pyyaml>=6,<7
+  - rdkit>=2024.03,<2027
+  - numpy>=1.26,<3
+  - pandas>=2.1,<3
+  - scipy>=1.11,<2
+  - scikit-learn>=1.4,<2
+  - pip
+  - pip:
+      - chemprop==2.2.1
