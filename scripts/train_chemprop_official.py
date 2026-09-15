@@ -26,8 +26,9 @@ CHEMPROP_VERSION = "2.2.1"
 def require_chemprop() -> tuple[str, str]:
     import torch
 
-    executable = shutil.which("chemprop") or str(Path(sys.executable).with_name("chemprop"))
-    if not Path(executable).is_file():
+    bundled_executable = Path(sys.executable).with_name("chemprop")
+    executable = str(bundled_executable) if bundled_executable.is_file() else shutil.which("chemprop")
+    if executable is None or not Path(executable).is_file():
         raise RuntimeError(
             "Official Chemprop v2 is required. Create the modelling environment from "
             "environment-modeling.yml or environment-modeling-cuda.yml."
@@ -149,18 +150,20 @@ def main() -> int:
             int(config["training"].get("warmup_epochs", 0)),
             max(0, int(config["training"]["max_epochs"]) - 1),
         )
+    if args.resume:
+        raise RuntimeError(
+            "Native Chemprop v2.2 CLI does not restore Lightning optimizer/scheduler state. "
+            "This baseline deliberately refuses unsafe partial resume; rerun with a new run identity."
+        )
     executable, chemprop_version = require_chemprop()
     seed_everything(args.seed, bool(config.get("reproducibility", {}).get("deterministic", True)))
     run, metadata, started = begin_run(args, config)
     if metadata.get("already_completed"):
         print(f"Run already completed: {run.run_dir}")
         return 0
-    if args.resume:
-        raise RuntimeError(
-            "Native Chemprop v2.2 CLI does not restore Lightning optimizer/scheduler state. "
-            "This baseline deliberately refuses unsafe partial resume; rerun with a new run identity."
-        )
-    bundle = load_direct_data(config["data"].get("split_scheme", "ecfp_cluster"), args.fold, args.cyp)
+    bundle = load_direct_data(
+        config["data"].get("split_scheme", "ecfp_cluster"), args.fold, config["data"].get("cyps")
+    )
     if args.smoke_test:
         bundle = smoke_subset(bundle)
     leakage_checks(bundle, run.run_dir)

@@ -126,8 +126,9 @@ def _native_chemprop_tasks(run_dir: Path) -> tuple[str, ...]:
 def predict_native_chemprop(
     run_dir: Path, frame: pd.DataFrame, device: str, metadata: dict, output_dir: Path,
 ) -> pd.DataFrame:
-    executable = shutil.which("chemprop") or str(Path(sys.executable).with_name("chemprop"))
-    if not Path(executable).is_file():
+    bundled_executable = Path(sys.executable).with_name("chemprop")
+    executable = str(bundled_executable) if bundled_executable.is_file() else shutil.which("chemprop")
+    if executable is None or not Path(executable).is_file():
         raise RuntimeError("Official Chemprop executable is unavailable in the active environment")
     checkpoint_path = _native_chemprop_checkpoint(run_dir)
     task_names = _native_chemprop_tasks(run_dir)

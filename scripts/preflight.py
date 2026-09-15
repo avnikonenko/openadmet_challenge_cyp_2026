@@ -41,9 +41,15 @@ def main() -> int:
         load_direct_data(config.get("data", {}).get("split_scheme", "ecfp_cluster"), 0)
         if config.get("model", {}).get("type") == "chemprop_official_v2":
             import chemprop
+            import torch
 
             if chemprop.__version__ != "2.2.1":
                 raise ValueError(f"expected Chemprop 2.2.1, found {chemprop.__version__}")
+            torch_version = tuple(int(part) for part in torch.__version__.split("+", 1)[0].split(".")[:2])
+            if not (2, 3) <= torch_version < (2, 6):
+                raise ValueError(
+                    f"official Chemprop requires PyTorch >=2.3,<2.6; found {torch.__version__}"
+                )
     except Exception as exc:
         failures.append(f"data/fold validation: {type(exc).__name__}: {exc}")
         config = None
