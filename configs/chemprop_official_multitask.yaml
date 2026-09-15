@@ -1,0 +1,31 @@
+experiment: chemprop_official_multitask
+model:
+  type: chemprop_official_v2
+  implementation: chemprop
+  version: 2.2.1
+  message_hidden_dim: 300
+  message_passing_depth: 3
+  dropout: 0.10
+  aggregation: mean
+  ffn_hidden_dim: 300
+  ffn_num_layers: 2
+data:
+  split_scheme: ecfp_cluster
+  cyps: [CYP1A2, CYP2C9, CYP2D6, CYP3A4]
+featurization:
+  policy: fail
+training:
+  batch_size: 64
+  max_epochs: 100
+  num_workers: 0
+  early_stopping_patience: 15
+  gradient_clip_norm: 5.0
+  warmup_epochs: 2
+  init_learning_rate: 1.0e-4
+  max_learning_rate: 1.0e-3
+  final_learning_rate: 1.0e-4
+  selection_metric: MAE
+  metric_direction: minimize
+  precision: native_chemprop
+reproducibility:
+  deterministic: true
