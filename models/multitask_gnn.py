@@ -103,6 +103,72 @@ class DMPNNEncoder(nn.Module):
         return torch.stack(molecules)
 
 
+class ResidualBlock(nn.Module):
+    """x -> Linear -> activation -> dropout -> Linear -> activation -> dropout -> x + block(x).
+
+    The optional LayerNorm is applied before the block (pre-norm) so the identity
+    path stays unnormalized and the block remains a pure residual correction.
+    """
+
+    def __init__(self, dim: int, dropout: float, layer_norm: bool = False):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim) if layer_norm else nn.Identity()
+        self.block = nn.Sequential(
+            nn.Linear(dim, dim), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(dim, dim), nn.ReLU(), nn.Dropout(dropout),
+        )
+
+    def forward(self, values: torch.Tensor) -> torch.Tensor:
+        return values + self.block(self.norm(values))
+
+
+def build_head(
+    input_dim: int, hidden_dim: int, layers: int, dropout: float,
+    head_type: str = "mlp", layer_norm: bool = False,
+) -> nn.Module:
+    """Build one scalar prediction head.
+
+    ``mlp`` reproduces the original plain feed-forward head exactly, so existing
+    checkpoints keep loading. ``residual_mlp`` projects into the hidden width once
+    and then applies ``max(1, layers - 1)`` residual blocks before the output layer.
+    """
+    if head_type == "mlp":
+        if layer_norm:
+            raise ValueError(
+                "model.head_layer_norm applies only to head_type=residual_mlp; "
+                "the mlp head is kept bit-identical to the original architecture"
+            )
+        modules: list[nn.Module] = []
+        current = input_dim
+        for _ in range(max(0, layers - 1)):
+            modules.extend([nn.Linear(current, hidden_dim), nn.ReLU(), nn.Dropout(dropout)])
+            current = hidden_dim
+        modules.append(nn.Linear(current, 1))
+        return nn.Sequential(*modules)
+    if head_type != "residual_mlp":
+        raise ValueError(f"model.head_type must be mlp or residual_mlp, not {head_type!r}")
+    blocks = [
+        ResidualBlock(hidden_dim, dropout, layer_norm) for _ in range(max(1, layers - 1))
+    ]
+    return nn.Sequential(
+        nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout),
+        *blocks, nn.Linear(hidden_dim, 1),
+    )
+
+
+def reset_module_parameters(module: nn.Module) -> None:
+    """Reinitialize every parameterized submodule.
+
+    The root module is skipped: a container that defines its own ``reset_parameters``
+    in terms of this helper would otherwise recurse into itself forever.
+    """
+    for child in module.modules():
+        if child is module:
+            continue
+        if hasattr(child, "reset_parameters"):
+            child.reset_parameters()
+
+
 class CYPDMPNN(nn.Module):
     def __init__(
         self,
@@ -114,6 +180,8 @@ class CYPDMPNN(nn.Module):
         ffn_hidden_dim: int = 300,
         ffn_num_layers: int = 2,
         ffn_dropout: float = 0.1,
+        head_type: str = "mlp",
+        head_layer_norm: bool = False,
     ):
         super().__init__()
         self.task_names = tuple(task_names)
@@ -122,26 +190,17 @@ class CYPDMPNN(nn.Module):
         )
         self.heads = nn.ModuleDict(
             {
-                task: self._head(message_hidden_dim, ffn_hidden_dim, ffn_num_layers, ffn_dropout)
+                task: build_head(
+                    message_hidden_dim, ffn_hidden_dim, ffn_num_layers, ffn_dropout,
+                    head_type, head_layer_norm,
+                )
                 for task in self.task_names
             }
         )
-
-    @staticmethod
-    def _head(input_dim: int, hidden_dim: int, layers: int, dropout: float) -> nn.Module:
-        modules: list[nn.Module] = []
-        current = input_dim
-        for _ in range(max(0, layers - 1)):
-            modules.extend([nn.Linear(current, hidden_dim), nn.ReLU(), nn.Dropout(dropout)])
-            current = hidden_dim
-        modules.append(nn.Linear(current, 1))
-        return nn.Sequential(*modules)
 
     def forward(self, graph: GraphBatch) -> torch.Tensor:
         embedding = self.encoder(graph)
         return torch.cat([self.heads[task](embedding) for task in self.task_names], dim=1)
 
     def reset_heads(self) -> None:
-        for module in self.heads.modules():
-            if hasattr(module, "reset_parameters"):
-                module.reset_parameters()
+        reset_module_parameters(self.heads)

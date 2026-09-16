@@ -29,6 +29,28 @@ class DataBundle:
     upper_columns: tuple[str, ...]
     uncertainty_columns: tuple[str, ...]
     split_metadata: dict[str, object]
+    scored_tasks: tuple[str, ...] | None = None
+    task_labels: tuple[str, ...] | None = None
+
+    @property
+    def scored_task_names(self) -> tuple[str, ...]:
+        """Tasks that are predicted, validated, and scored; defaults to every task.
+
+        A joint multi-assay model trains on auxiliary assay columns as well, but is
+        only ever scored on the direct-pIC50 tasks so its out-of-fold metrics stay
+        comparable with the single-assay models.
+        """
+        return tuple(self.scored_tasks) if self.scored_tasks else tuple(self.task_names)
+
+    @property
+    def scored_indices(self) -> tuple[int, ...]:
+        return tuple(self.task_names.index(task) for task in self.scored_task_names)
+
+    @property
+    def scored_labels(self) -> tuple[str, ...]:
+        """CYP name reported for each scored task in predictions and metrics."""
+        labels = tuple(self.task_labels) if self.task_labels else tuple(self.task_names)
+        return tuple(labels[index] for index in self.scored_indices)
 
 
 def _identities_and_folds() -> pd.DataFrame:
@@ -120,10 +142,10 @@ def load_direct_data(scheme: str, fold: int, cyps: list[str] | None = None) -> D
     )
 
 
-def load_single_concentration_data(
-    scheme: str, fold: int, inner_fold: int | None = None
-) -> DataBundle:
-    base = _identities_and_folds()
+def _single_concentration_columns(
+    base: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Pivot the long single-concentration screen into one column per CYP."""
     single = pd.read_csv(DATA_DIR / "cyp-challenge-single-concentration-TRAIN.csv")
     _validate_source_smiles(base, single, "Single-concentration dataset")
     if single.duplicated(["Molecule_Name", "enzyme"]).any():
@@ -132,6 +154,71 @@ def load_single_concentration_data(
     errors = single.pivot(index="Molecule_Name", columns="enzyme", values="log2fc_std_error")
     values = values.reindex(columns=CYPS).rename(columns={cyp: f"{cyp}_single_conc" for cyp in CYPS})
     errors = errors.reindex(columns=CYPS).rename(columns={cyp: f"{cyp}_single_conc_SE" for cyp in CYPS})
+    return values, errors, single
+
+
+def load_joint_multiassay_data(
+    scheme: str, fold: int, cyps: list[str] | None = None
+) -> DataBundle:
+    """One molecule table carrying both assays as separately masked targets.
+
+    Direct pIC50 and single-concentration log2 fold change become independent target
+    columns of the same masked multitask vector, so a shared encoder learns from both
+    at once instead of sequentially. Fold safety is identical to the direct task: every
+    outer-validation molecule is withheld from training in *both* assays, and only the
+    direct-pIC50 tasks are scored.
+    """
+    requested = tuple(cyps or CYPS)
+    unknown = set(requested) - set(CYPS)
+    if unknown:
+        raise ValueError(f"Unknown CYP targets: {sorted(unknown)}")
+    base = _identities_and_folds()
+    direct = pd.read_csv(DATA_DIR / "cyp-challenge-TRAIN_inhibition.csv")
+    _validate_source_smiles(base, direct, "Direct-pIC50 dataset")
+    values, errors, _single = _single_concentration_columns(base)
+    frame = base.merge(
+        direct.drop(columns="SMILES"), on="Molecule_Name", how="left", validate="one_to_one"
+    )
+    frame = frame.merge(values.reset_index(), on="Molecule_Name", how="left", validate="one_to_one")
+    frame = frame.merge(errors.reset_index(), on="Molecule_Name", how="left", validate="one_to_one")
+    if len(frame) != len(base):
+        raise ValueError("Joint multi-assay assembly changed the molecule count")
+    indices = [CYPS.index(cyp) for cyp in requested]
+    direct_targets = tuple(DIRECT_TARGETS[index] for index in indices)
+    single_targets = tuple(f"{cyp}_single_conc" for cyp in requested)
+    task_names = tuple(f"{cyp}|direct_pic50" for cyp in requested) + tuple(
+        f"{cyp}|single_concentration" for cyp in requested
+    )
+    target_columns = direct_targets + single_targets
+    lower_columns = tuple(DIRECT_LOWER[index] for index in indices) + tuple("" for _ in requested)
+    upper_columns = tuple(DIRECT_UPPER[index] for index in indices) + tuple("" for _ in requested)
+    uncertainty_columns = tuple(DIRECT_STD[index] for index in indices) + tuple(
+        f"{cyp}_single_conc_SE" for cyp in requested
+    )
+    direct_observed = frame.loc[:, list(direct_targets)].notna().any(axis=1)
+    any_observed = frame.loc[:, list(target_columns)].notna().any(axis=1)
+    train_mask, validation_mask = split_masks(frame, scheme, fold)
+    train_mask &= any_observed
+    validation_mask &= direct_observed
+    return DataBundle(
+        frame=frame, train_mask=train_mask, validation_mask=validation_mask,
+        task_names=task_names, target_columns=target_columns,
+        lower_columns=lower_columns, upper_columns=upper_columns,
+        uncertainty_columns=uncertainty_columns,
+        split_metadata={
+            "scheme": scheme, "outer_fold": fold, "purpose": "joint_multiassay",
+            "assays": ["direct_pic50", "single_concentration"],
+        },
+        scored_tasks=tuple(f"{cyp}|direct_pic50" for cyp in requested),
+        task_labels=tuple(requested) * 2,
+    )
+
+
+def load_single_concentration_data(
+    scheme: str, fold: int, inner_fold: int | None = None
+) -> DataBundle:
+    base = _identities_and_folds()
+    values, errors, single = _single_concentration_columns(base)
     frame = base.merge(values.reset_index(), on="Molecule_Name", how="inner", validate="one_to_one")
     frame = frame.merge(errors.reset_index(), on="Molecule_Name", how="left", validate="one_to_one")
     expected = set(single["Molecule_Name"])

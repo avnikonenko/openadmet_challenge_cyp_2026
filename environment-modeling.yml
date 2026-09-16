@@ -14,5 +14,9 @@ dependencies:
   - scipy>=1.11,<2
   - scikit-learn>=1.4,<2
   - pip
+  # GINE encoders (models/gine_model.py) use torch_geometric.nn.GINEConv.
+  # The core torch-geometric package is pure Python; the optional compiled
+  # torch-scatter/torch-sparse wheels are not required for GINEConv.
   - pip:
       - chemprop==2.2.1
+      - torch-geometric>=2.5,<3
