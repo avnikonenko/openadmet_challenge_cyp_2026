@@ -209,7 +209,9 @@ class TargetConditionedTests(unittest.TestCase):
         )
         # Unobserved CYPs contribute nothing, so the masked loss equals the loss over
         # the observed endpoints alone.
-        self.assertAlmostEqual(float(full), float(observed_only), places=6)
+        self.assertAlmostEqual(
+            float(full.detach()), float(observed_only.detach()), places=6
+        )
         full.backward()
         self.assertTrue(torch.isfinite(model.heads.cyp_embedding.weight.grad).all())
 
