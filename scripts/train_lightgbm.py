@@ -163,7 +163,8 @@ def main() -> int:
                     "fold": args.fold, "CYP": cyp, "y_true": getattr(row, target),
                     "y_pred": float(pred), "experimental_uncertainty": getattr(row, uncertainty),
                     "lower": getattr(row, lower), "upper": getattr(row, upper),
-                    "model": config.get("experiment", "lightgbm"), "seed": args.seed,
+                    "model": config.get("model_id", config.get("experiment", "lightgbm")),
+                    "seed": args.seed,
                     "prediction_scale": "original",
                 }
             )

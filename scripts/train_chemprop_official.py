@@ -216,7 +216,8 @@ def main() -> int:
                     "fold": args.fold, "CYP": cyp, "y_true": getattr(row, target),
                     "y_pred": getattr(row, prediction_column),
                     "experimental_uncertainty": getattr(row, uncertainty), "lower": getattr(row, lower),
-                    "upper": getattr(row, upper), "model": config["experiment"], "seed": args.seed,
+                    "upper": getattr(row, upper),
+                    "model": config.get("model_id", config["experiment"]), "seed": args.seed,
                     "prediction_scale": "original",
                 }
             )

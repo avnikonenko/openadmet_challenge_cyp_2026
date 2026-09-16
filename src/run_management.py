@@ -18,6 +18,13 @@ from .utils import (
 def begin_run(args: argparse.Namespace, config: dict[str, Any]) -> tuple[RunContext, dict[str, Any], float]:
     experiment = str(config.get("experiment", "unnamed_experiment"))
     run_name = args.run_name or config.get("run_name")
+    # A run name selects a model/configuration variant inside an experiment family.
+    # Keep the family name for directory grouping, but give predictions a distinct
+    # identity so OOF aggregation cannot mix different matrix/grid variants.
+    model_id = str(config.get("model_id") or (
+        f"{experiment}::{run_name}" if run_name else experiment
+    ))
+    config["model_id"] = model_id
     run_dir = resolve_run_dir(args.output_dir, experiment, args.fold, args.seed, run_name)
     run = RunContext(run_dir, args.resume)
     started = time.monotonic()
@@ -26,6 +33,9 @@ def begin_run(args: argparse.Namespace, config: dict[str, Any]) -> tuple[RunCont
     if args.resume and config_path.exists():
         with config_path.open(encoding="utf-8") as handle:
             previous_config = yaml.safe_load(handle) or {}
+        # Runs started before model_id was introduced remain resumable; the identity
+        # is deterministic from the existing experiment/run-name path.
+        previous_config.setdefault("model_id", model_id)
         if previous_config != config:
             raise ValueError("Resolved configuration differs from the interrupted run")
     if run.completed.exists() and args.resume:
@@ -86,6 +96,7 @@ def begin_run(args: argparse.Namespace, config: dict[str, Any]) -> tuple[RunCont
         ),
         "fold": args.fold,
         "experiment": experiment,
+        "model_id": model_id,
         "output_root": str(Path(args.output_dir).resolve()),
         "model_type": model_type,
         "chemprop_implementation": "self-contained-chemprop-style" if model_type == "dmpnn" else "not-applicable",

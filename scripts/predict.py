@@ -36,6 +36,12 @@ def predict_dmpnn(run_dir: Path, frame: pd.DataFrame, device: str, batch_size: i
     validate_encoder_checkpoint(checkpoint, checkpoint.get("model_config"), partial_load=False)
     model_config = checkpoint["model_config"]
     task_names = tuple(checkpoint["task_names"])
+    scored_tasks = tuple(checkpoint.get("scored_tasks") or task_names)
+    scored_labels = tuple(checkpoint.get("scored_labels") or scored_tasks)
+    unknown_scored = set(scored_tasks) - set(task_names)
+    if unknown_scored or len(scored_labels) != len(scored_tasks):
+        raise ValueError(f"Checkpoint scored-task metadata are inconsistent: {checkpoint_path}")
+    scored_indices = [task_names.index(task) for task in scored_tasks]
     model = build_model(task_names, {"model": model_config})
     model.load_state_dict(checkpoint["model_state_dict"])
     normalized = normalize_device(device)
@@ -61,8 +67,8 @@ def predict_dmpnn(run_dir: Path, frame: pd.DataFrame, device: str, batch_size: i
             batch = frame.iloc[start : start + batch_size]
             output = model(batch_graphs(batch["canonical_smiles"].tolist()).to(normalized))
             values.append(output.cpu().numpy() * stds + means)
-    predictions = np.concatenate(values)
-    return long_test_predictions(frame, task_names, predictions, metadata)
+    predictions = np.concatenate(values)[:, scored_indices]
+    return long_test_predictions(frame, scored_labels, predictions, metadata)
 
 
 def predict_lightgbm(run_dir: Path, frame: pd.DataFrame, metadata: dict) -> pd.DataFrame:
@@ -225,7 +231,7 @@ def _checkpoint_task_names(run_dir: Path, model_type: str) -> tuple[str, ...]:
     tasks = tuple(checkpoint.get("task_names", ()))
     if not tasks:
         raise ValueError(f"Checkpoint has no task list: {checkpoint_path}")
-    return tasks
+    return tuple(checkpoint.get("scored_labels") or checkpoint.get("scored_tasks") or tasks)
 
 
 def long_test_predictions(frame, task_names, values, metadata):
@@ -238,7 +244,7 @@ def long_test_predictions(frame, task_names, values, metadata):
                     "canonical_smiles": row.canonical_smiles,
                     "CYP": cyp,
                     "y_pred": float(values[row_index, task_index]),
-                    "model": metadata.get("experiment", "unknown"),
+                    "model": metadata.get("model_id", metadata.get("experiment", "unknown")),
                     "fold": metadata.get("fold"),
                     "seed": metadata.get("seed"),
                     "prediction_scale": "original",

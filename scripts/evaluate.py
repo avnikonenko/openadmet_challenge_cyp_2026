@@ -9,7 +9,21 @@ import numpy as np
 import pandas as pd
 
 import _bootstrap  # noqa: F401
+from src.comparison import model_comparison_table, residual_complementarity
 from src.metrics import regression_metrics
+
+
+def resolved_model_id(metadata: dict, run_dir: Path) -> str:
+    """Return a stable model identity, including legacy run-name variants."""
+    if metadata.get("model_id"):
+        return str(metadata["model_id"])
+    experiment = str(metadata.get("experiment", "unknown"))
+    arguments_path = run_dir / "cli_args.json"
+    if arguments_path.exists():
+        arguments = json.loads(arguments_path.read_text(encoding="utf-8"))
+        if arguments.get("run_name"):
+            return f"{experiment}::{arguments['run_name']}"
+    return experiment
 
 
 def main() -> int:
@@ -18,14 +32,23 @@ def main() -> int:
     parser.add_argument("--aggregate-oof", action="store_true")
     parser.add_argument("--folds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument(
+        "--reference-model",
+        help="Model name that paired comparisons are measured against "
+        "(default: the model with the best mean macro ST-RAE)",
+    )
+    parser.add_argument("--bootstrap-samples", type=int, default=1000)
+    parser.add_argument("--bootstrap-seed", type=int, default=20260916)
     args = parser.parse_args()
+    if args.bootstrap_samples < 1:
+        parser.error("--bootstrap-samples must be positive")
     root = args.input.resolve()
     output = (args.output_dir or root / "evaluation").resolve()
     output.mkdir(parents=True, exist_ok=True)
     prediction_paths = sorted(root.glob("**/predictions.csv"))
     prediction_by_run = {path.parent: path for path in prediction_paths}
     metadata_by_run = {path.parent: path for path in root.glob("**/metadata.json")}
-    records, status_rows, macro_rows, completed_prediction_paths = [], [], [], []
+    records, status_rows, macro_rows, completed_predictions = [], [], [], []
     for run_dir in sorted(set(prediction_by_run) | set(metadata_by_run)):
         path = prediction_by_run.get(run_dir)
         metadata = {}
@@ -35,7 +58,8 @@ def main() -> int:
             run_status = metadata.get("status", "unknown")
             if run_status != "completed":
                 status_rows.append({
-                    "run_dir": str(run_dir), "model": metadata.get("experiment", "unknown"),
+                    "run_dir": str(run_dir),
+                    "model": resolved_model_id(metadata, run_dir),
                     "fold": metadata.get("fold"), "seed": metadata.get("seed"),
                     "status": run_status,
                     "error": "Excluded from metrics and OOF because run is not completed",
@@ -64,8 +88,12 @@ def main() -> int:
             seed = int(frame["seed"].iloc[0])
             if int(metadata.get("fold", -1)) != fold or int(metadata.get("seed", -1)) != seed:
                 raise ValueError("prediction fold/seed provenance disagrees with metadata.json")
-            if metadata.get("experiment") != model:
-                raise ValueError("prediction model name disagrees with metadata.json experiment")
+            expected_model = resolved_model_id(metadata, run_dir)
+            legacy_model = metadata.get("experiment")
+            if model not in {expected_model, legacy_model}:
+                raise ValueError("prediction model name disagrees with metadata.json model identity")
+            frame["model"] = expected_model
+            model = expected_model
             pretraining = bool(metadata.get("pretrained_encoder"))
             finetune_mode = metadata.get("transfer_mode", "none")
             for row in per_cyp.to_dict("records"):
@@ -81,13 +109,20 @@ def main() -> int:
                 {
                     "model": model, "pretraining": pretraining,
                     "finetune_mode": finetune_mode, "fold": fold, "seed": seed,
+                    "CYP_set": "|".join(sorted(per_cyp["CYP"].astype(str))),
+                    "scored_CYPs": int(per_cyp["CYP"].nunique()),
                     **macro,
                 }
             )
             status_rows.append({"run_dir": str(run_dir), "model": model, "fold": fold, "seed": seed, "status": metadata.get("status", "unknown"), "error": "", **macro})
-            completed_prediction_paths.append(path)
+            completed_predictions.append((path, frame))
         except Exception as exc:
-            status_rows.append({"run_dir": str(run_dir), "model": metadata.get("experiment", "unknown"), "fold": metadata.get("fold"), "seed": metadata.get("seed"), "status": "failed_or_incomplete", "error": f"{type(exc).__name__}: {exc}"})
+            status_rows.append({
+                "run_dir": str(run_dir),
+                "model": resolved_model_id(metadata, run_dir),
+                "fold": metadata.get("fold"), "seed": metadata.get("seed"),
+                "status": "failed_or_incomplete", "error": f"{type(exc).__name__}: {exc}",
+            })
     metrics = pd.DataFrame(records)
     macro_metrics = pd.DataFrame(macro_rows)
     status = pd.DataFrame(
@@ -117,8 +152,21 @@ def main() -> int:
             ["model", "pretraining", "finetune_mode"], dropna=False
         ).agg(runs=("fold", "size"), **aggregations).reset_index()
         macro_summary.to_csv(output / "macro_metrics_summary.csv", index=False)
-    if args.aggregate_oof and completed_prediction_paths:
-        oof = pd.concat([pd.read_csv(path).assign(run_dir=str(path.parent)) for path in completed_prediction_paths], ignore_index=True)
+        if args.reference_model and args.reference_model not in set(macro_metrics["model"]):
+            raise ValueError(
+                f"--reference-model {args.reference_model!r} has no completed runs under {root}"
+            )
+        comparison, reference_used = model_comparison_table(
+            macro_metrics, args.reference_model,
+            samples=args.bootstrap_samples, seed=args.bootstrap_seed,
+        )
+        comparison.to_csv(output / "model_comparison.csv", index=False)
+        print(f"Paired model comparison written against reference model {reference_used!r}")
+    if args.aggregate_oof and completed_predictions:
+        oof = pd.concat(
+            [frame.assign(run_dir=str(path.parent)) for path, frame in completed_predictions],
+            ignore_index=True,
+        )
         if oof.duplicated(["model", "seed", "molecule_id", "CYP"]).any():
             raise ValueError("OOF aggregation found duplicate model/seed/molecule/CYP predictions")
         oof.to_csv(output / "oof_predictions.csv", index=False)
@@ -167,6 +215,24 @@ def main() -> int:
                 },
             ).reset_index()
             oof_macro_summary.to_csv(output / "oof_macro_summary_across_seeds.csv", index=False)
+        # Error complementarity between candidate ensemble members: models that make
+        # nearly identical errors should not both enter an ensemble.
+        truth_variants = oof.groupby(["model", "molecule_id", "CYP"])["y_true"].nunique()
+        if truth_variants.gt(1).any():
+            raise ValueError("OOF truth values disagree across seeds for the same model/molecule/CYP")
+        seed_averaged = {
+            str(model): group.groupby(["molecule_id", "CYP"], as_index=False).agg(
+                y_true=("y_true", "first"), y_pred=("y_pred", "mean")
+            )
+            for model, group in oof.groupby("model", sort=True)
+        }
+        if len(seed_averaged) > 1:
+            complementarity = residual_complementarity(seed_averaged)
+            complementarity.to_csv(output / "oof_residual_complementarity.csv", index=False)
+            print(
+                f"OOF residual complementarity written for {len(seed_averaged)} models "
+                f"({len(complementarity)} pairwise rows)"
+            )
     missing_rows = []
     valid_status = status.loc[status["status"].eq("completed")]
     for (model, seed), group in valid_status.groupby(["model", "seed"], dropna=False):
@@ -176,11 +242,11 @@ def main() -> int:
     pd.DataFrame(missing_rows, columns=["model", "seed", "missing_fold"]).to_csv(output / "missing_folds.csv", index=False)
     incomplete = int(status["status"].ne("completed").sum()) if len(status) else 0
     print(
-        f"Evaluated {len(completed_prediction_paths)} completed prediction files "
+        f"Evaluated {len(completed_predictions)} completed prediction files "
         f"from {len(prediction_paths)} discovered files; "
         f"missing model/seed/fold combinations: {len(missing_rows)}; incomplete/failed runs: {incomplete}"
     )
-    if not completed_prediction_paths:
+    if not completed_predictions:
         return 1
     return 2 if missing_rows or incomplete else 0
 

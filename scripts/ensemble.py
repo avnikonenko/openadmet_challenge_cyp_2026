@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 import _bootstrap  # noqa: F401
+from src.comparison import residual_complementarity
 from src.metrics import regression_metrics
 from src.utils import json_dump
 
@@ -55,6 +56,7 @@ def main() -> int:
         for name in (
             "ensemble_predictions.csv", "test_ensemble_predictions.csv",
             "oof_ensemble_predictions.csv", "ensemble_metadata.json",
+            "oof_residual_complementarity.csv",
         )
         if (args.output_dir / name).exists()
     ]
@@ -139,6 +141,12 @@ def main() -> int:
                 "Prediction and OOF inputs are not paired in the same model/fold/seed order: "
                 f"predictions={prediction_identities}, OOF={oof_identities}"
             )
+        complementarity = residual_complementarity(
+            {
+                f"{identity[0]}|fold{identity[1]}|seed{identity[2]}": frame
+                for identity, frame in zip(oof_identities, oof_frames)
+            }
+        )
         oof = pd.concat(oof_frames, ignore_index=True)
         if (oof.groupby(KEYS)["canonical_smiles"].nunique(dropna=False) > 1).any():
             raise ValueError("OOF components disagree on canonical molecule identity")
@@ -166,6 +174,9 @@ def main() -> int:
     merged[output_columns].to_csv(args.output_dir / "test_ensemble_predictions.csv", index=False)
     if oof_output is not None:
         oof_output.to_csv(args.output_dir / "oof_ensemble_predictions.csv", index=False)
+        # Written only once every OOF validation has passed, so a rejected ensemble
+        # never leaves a stray file behind that the next run would have to --force past.
+        complementarity.to_csv(args.output_dir / "oof_residual_complementarity.csv", index=False)
     json_dump(
         {
             "method": args.method,

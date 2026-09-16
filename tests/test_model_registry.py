@@ -99,6 +99,27 @@ class ModelRegistryTests(unittest.TestCase):
             self.assertEqual(result.loc[0, "run_id"], archived_run_id)
             self.assertEqual(result.loc[0, "registered_at_utc"], archived_registered_at)
 
+    def test_registry_forward_migrates_and_retains_archived_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "experiment_leaderboard.csv"
+            archived = {
+                "run_id": "archived/fold0/seed1",
+                "experiment": "archived",
+                "model": "dmpnn",
+                "CYP": "CYP2D6",
+                "registered_at_utc": "2026-01-01T00:00:00+00:00",
+                "completion_status": "completed",
+            }
+            # Simulate a valid older schema that predates model_id and capacity fields.
+            pd.DataFrame([archived]).to_csv(output, index=False)
+            self.write_run(root, "new-model", 0, 1, 0.7)
+            result = update_model_statistics(root, output)
+            self.assertEqual(set(result["run_id"]), {archived["run_id"], "new-model/fold0/seed1"})
+            old = result.loc[result["run_id"].eq(archived["run_id"])].iloc[0]
+            self.assertEqual(old["registered_at_utc"], archived["registered_at_utc"])
+            self.assertTrue(pd.isna(old["model_id"]))
+
     def test_completed_run_updates_registry_automatically(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

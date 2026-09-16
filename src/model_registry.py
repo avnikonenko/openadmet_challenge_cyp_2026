@@ -14,6 +14,7 @@ import pandas as pd
 MODEL_STATISTICS_COLUMNS = [
     "run_id",
     "experiment",
+    "model_id",
     "model",
     "fold",
     "seed",
@@ -32,6 +33,16 @@ MODEL_STATISTICS_COLUMNS = [
     "transfer_mode",
     "pretraining_source",
     "loss_mode",
+    "pretraining_loss_mode",
+    "finetuning_loss_mode",
+    "training_stage",
+    "architecture",
+    "encoder_type",
+    "head_type",
+    "total_parameters",
+    "encoder_parameters",
+    "head_parameters",
+    "trainable_parameters",
     "split_scheme",
     "model_hyperparameters",
     "training_hyperparameters",
@@ -87,6 +98,18 @@ def _registry_key(run_id: object, cyp: object) -> tuple[str, str]:
     return str(run_id), "" if pd.isna(cyp) else str(cyp)
 
 
+def _model_id(metadata: dict[str, object], run_dir: Path) -> object:
+    if metadata.get("model_id"):
+        return metadata["model_id"]
+    experiment = metadata.get("experiment")
+    arguments_path = run_dir / "cli_args.json"
+    if arguments_path.exists():
+        arguments = json.loads(arguments_path.read_text(encoding="utf-8"))
+        if arguments.get("run_name"):
+            return f"{experiment}::{arguments['run_name']}"
+    return experiment
+
+
 def _metric_rows(run_dir: Path) -> list[dict[str, object]]:
     metrics_path = run_dir / "metrics_per_cyp.csv"
     if not metrics_path.exists():
@@ -124,6 +147,7 @@ def collect_model_statistics(input_root: Path, timestamp: str) -> pd.DataFrame:
         base = {
             "run_id": _run_id(run_dir, input_root),
             "experiment": metadata.get("experiment"),
+            "model_id": _model_id(metadata, run_dir),
             "model": metadata.get("model_type"),
             "fold": metadata.get("fold"),
             "seed": metadata.get("seed"),
@@ -136,7 +160,19 @@ def collect_model_statistics(input_root: Path, timestamp: str) -> pd.DataFrame:
             "pretraining_source": (
                 pretraining.get("checkpoint") if isinstance(pretraining, dict) else None
             ),
-            "loss_mode": loss_config.get("loss_mode"),
+            "loss_mode": metadata.get("loss_mode") or loss_config.get("loss_mode"),
+            # Stage-specific losses: what this run optimized, and what the checkpoint
+            # its encoder came from optimized.
+            "pretraining_loss_mode": metadata.get("pretraining_loss_mode"),
+            "finetuning_loss_mode": metadata.get("finetuning_loss_mode"),
+            "training_stage": metadata.get("training_stage"),
+            "architecture": metadata.get("architecture"),
+            "encoder_type": metadata.get("encoder_type", model_config.get("type")),
+            "head_type": metadata.get("head_type", model_config.get("head_type")),
+            "total_parameters": metadata.get("total_parameters"),
+            "encoder_parameters": metadata.get("encoder_parameters"),
+            "head_parameters": metadata.get("head_parameters"),
+            "trainable_parameters": metadata.get("trainable_parameters"),
             "split_scheme": split_scheme,
             "model_hyperparameters": _json_cell(model_config),
             "training_hyperparameters": _json_cell(training_config),
@@ -177,7 +213,7 @@ def _add_cv_statistics(frame: pd.DataFrame) -> pd.DataFrame:
     if completed.empty:
         return result.reindex(columns=MODEL_STATISTICS_COLUMNS)
     signature_columns = [
-        "experiment", "model", "transfer_mode", "CYP", "loss_mode", "split_scheme",
+        "model_id", "model", "transfer_mode", "CYP", "loss_mode", "split_scheme",
         "model_hyperparameters", "training_hyperparameters",
     ]
     result["_cv_group"] = result[signature_columns].fillna("").astype(str).agg("\x1f".join, axis=1)
@@ -223,18 +259,23 @@ def update_model_statistics(input_root: Path, output_path: Path) -> pd.DataFrame
         first_seen: dict[tuple[str, str], object] = {}
         if output_path.exists():
             existing = pd.read_csv(output_path)
-            required = set(MODEL_STATISTICS_COLUMNS)
-            if required.issubset(existing):
+            identity_columns = set(REGISTRY_KEYS + ["registered_at_utc"])
+            if identity_columns.issubset(existing):
                 first_seen = {
                     _registry_key(row.run_id, row.CYP): row.registered_at_utc
                     for row in existing.itertuples(index=False)
                 }
+                # Forward-migrate prior registry schemas without losing archived runs.
+                # Newly introduced columns are intentionally empty for historical rows.
+                existing = existing.reindex(columns=MODEL_STATISTICS_COLUMNS)
+            else:
+                existing = pd.DataFrame(columns=MODEL_STATISTICS_COLUMNS)
         if not current.empty:
             current["registered_at_utc"] = [
                 first_seen.get(_registry_key(row.run_id, row.CYP), timestamp)
                 for row in current.itertuples(index=False)
             ]
-        if not existing.empty and set(MODEL_STATISTICS_COLUMNS).issubset(existing):
+        if not existing.empty:
             current_run_ids = set(current["run_id"].astype(str))
             retained = existing.loc[~existing["run_id"].astype(str).isin(current_run_ids)]
             current = pd.concat([retained, current], ignore_index=True)
