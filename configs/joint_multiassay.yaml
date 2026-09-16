@@ -1,0 +1,60 @@
+# Joint multi-assay representation learning: direct pIC50 and single-concentration
+# inhibition trained together through one shared encoder, with a learned CYP embedding
+# and a learned assay embedding feeding one shared predictor.
+#
+# This is the alternative to sequential transfer (pretrain on single concentration, then
+# fine-tune on pIC50). Both are trained on the same outer folds and scored only on the
+# four direct-pIC50 endpoints, so their out-of-fold macro ST-RAE values are comparable.
+#
+# Fold safety: every outer-validation molecule is withheld from training in *both*
+# assays, so the auxiliary assay cannot leak a validation molecule into the encoder.
+#
+# Run it with the existing multitask trainer; data.task_set selects the joint table:
+#   python scripts/train_multitask.py --config configs/joint_multiassay.yaml --fold 0 --seed 1 --device cuda:0
+experiment: joint_multiassay
+model:
+  type: dmpnn
+  architecture: joint_multiassay
+  message_hidden_dim: 600
+  message_passing_depth: 4
+  dropout: 0.10
+  aggregation: mean
+  cyp_embedding_dim: 32
+  assay_embedding_dim: 16
+  predictor_hidden_dim: 600
+  predictor_layers: 3
+  ffn_dropout: 0.10
+  head_type: mlp
+  head_layer_norm: false
+data:
+  task_set: joint_multiassay
+  split_scheme: ecfp_cluster
+  target_normalization: zscore_per_target
+  cyps: [CYP1A2, CYP2C9, CYP2D6, CYP3A4]
+featurization:
+  policy: fail
+training:
+  batch_size: 64
+  max_epochs: 100
+  optimizer: adamw
+  learning_rate: 1.0e-3
+  encoder_learning_rate: 1.0e-3
+  head_learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  early_stopping_patience: 15
+  gradient_clip_norm: 5.0
+  num_workers: 0
+  selection_metric: macro_ST_RAE
+  metric_direction: minimize
+  precision: auto
+  scheduler: none
+  initial_epoch_estimate_seconds: 600
+  runtime_safety_margin_seconds: 60
+loss:
+  # Only the direct-pIC50 targets carry confidence intervals; the single-concentration
+  # targets fall back to squared error inside the same interval-aware loss.
+  loss_mode: interval_aware
+  weight_clip_min: 0.2
+  weight_clip_max: 5.0
+reproducibility:
+  deterministic: true

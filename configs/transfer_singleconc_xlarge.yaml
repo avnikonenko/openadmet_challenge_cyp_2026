@@ -1,0 +1,76 @@
+# XLARGE single-concentration -> pIC50 transfer. Derived from transfer_singleconc.yaml;
+# only encoder/head capacity changes, so the transfer comparison stays matched.
+#
+# Losses are declared per stage rather than inherited from one top-level block:
+# single-concentration pretraining optimizes plain squared error (that assay has no
+# confidence intervals, so the interval-aware loss degenerates to squared error there
+# anyway), and only the direct-pIC50 stage optimizes the official interval-aware loss.
+experiment: transfer_singleconc_xlarge
+pretraining_experiment: singleconc_pretrain_xlarge
+finetune_experiment: singleconc_to_pic50_xlarge
+model:
+  type: dmpnn
+  architecture: cyp_specific_heads
+  message_hidden_dim: 1024
+  message_passing_depth: 5
+  dropout: 0.10
+  aggregation: mean
+  ffn_hidden_dim: 1024
+  ffn_num_layers: 3
+  ffn_dropout: 0.10
+  head_type: mlp
+  head_layer_norm: false
+data:
+  split_scheme: ecfp_cluster
+  target_normalization: zscore_per_target
+  inner_validation_fold: null
+  cyps: [CYP1A2, CYP2C9, CYP2D6, CYP3A4]
+featurization:
+  policy: fail
+pretraining:
+  loss_mode: standard
+  batch_size: 64
+  max_epochs: 100
+  optimizer: adamw
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  early_stopping_patience: 15
+  gradient_clip_norm: 5.0
+  num_workers: 0
+  selection_metric: macro_MAE
+  metric_direction: minimize
+  precision: auto
+  scheduler: none
+  initial_epoch_estimate_seconds: 600
+  runtime_safety_margin_seconds: 60
+transfer:
+  mode: full
+  require_fold_safe_auxiliary: true
+  initialize_encoder_from_pretraining: true
+  reset_output_heads: true
+  encoder_learning_rate: 5.0e-5
+  head_learning_rate: 5.0e-4
+  batch_size: 64
+  max_epochs: 100
+  early_stopping_patience: 15
+  gradient_clip_norm: 5.0
+  weight_decay: 1.0e-5
+  freeze_encoder_epochs: 10
+  num_workers: 0
+  selection_metric: macro_ST_RAE
+  metric_direction: minimize
+  precision: auto
+  scheduler: none
+  initial_epoch_estimate_seconds: 600
+  runtime_safety_margin_seconds: 60
+  endpoint_refinement:
+    enabled: false
+    encoder_mode: frozen
+    learning_rate: 1.0e-4
+    epochs: 20
+loss:
+  loss_mode: interval_aware
+  weight_clip_min: 0.2
+  weight_clip_max: 5.0
+reproducibility:
+  deterministic: true

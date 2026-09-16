@@ -10,7 +10,7 @@ from pathlib import Path
 
 import _bootstrap  # noqa: F401
 from models.transfer_model import load_encoder_weights
-from src.constants import ANALYSIS_TABLES, DATA_DIR
+from src.constants import ANALYSIS_TABLES, CYPS, DATA_DIR
 from src.data import load_direct_data
 from src.training import build_model
 from src.utils import load_config, normalize_device, system_metadata
@@ -50,6 +50,17 @@ def main() -> int:
                 raise ValueError(
                     f"official Chemprop requires PyTorch >=2.3,<2.6; found {torch.__version__}"
                 )
+        else:
+            architecture = config.get("model", {}).get("architecture", "cyp_specific_heads")
+            tasks = tuple(CYPS)
+            if architecture == "joint_multiassay":
+                tasks = tuple(f"{cyp}|direct_pic50" for cyp in CYPS) + tuple(
+                    f"{cyp}|single_concentration" for cyp in CYPS
+                )
+            # Instantiate the configured architecture even without --run-smoke.  This
+            # catches missing optional packages (notably torch-geometric) and malformed
+            # dimensions before a GPU allocation is requested.
+            build_model(tasks, config)
     except Exception as exc:
         failures.append(f"data/fold validation: {type(exc).__name__}: {exc}")
         config = None
