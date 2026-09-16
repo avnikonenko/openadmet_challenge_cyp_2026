@@ -1,5 +1,11 @@
 # OpenADMET CYP challenge
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB.svg?logo=python&logoColor=white)](environment-modeling.yml)
+[![PyTorch 2.3–2.5](https://img.shields.io/badge/PyTorch-2.3--2.5-EE4C2C.svg?logo=pytorch&logoColor=white)](environment-modeling.yml)
+[![Chemprop 2.2.1](https://img.shields.io/badge/Chemprop-2.2.1-4C72B0.svg)](environment-modeling.yml)
+[![CPU and CUDA 12.1](https://img.shields.io/badge/setup-CPU%20%7C%20CUDA%2012.1-76B900.svg?logo=nvidia&logoColor=white)](environment-modeling-cuda.yml)
+
 The repository contains the validated exploratory analysis under `analysis/` and a
 CLI-first modelling pipeline under `src/`, `models/`, `scripts/`, and `configs/`.
 For the staged Slurm workflow, GPU pre-flight gate, array template, and recovery
@@ -54,6 +60,13 @@ git clone https://huggingface.co/datasets/openadmet/cyp-challenge-train-test cyp
 The checkout remains an independent, ignored upstream dataset repository. Its commit
 history and contributors are not part of this project's Git history; retain the source
 repository and its license/provenance when using or redistributing the data.
+
+The repository's [MIT license](LICENSE) applies to the project-authored software and
+documentation only. It does **not** grant rights to the OpenADMET challenge datasets,
+third-party software, pretrained checkpoints, or other externally sourced artifacts.
+Those materials remain subject to their respective terms. Users are responsible for
+obtaining the challenge data from the official source and confirming that their use and
+redistribution comply with its current license and challenge rules.
 
 ## Quick start on cluster
 
