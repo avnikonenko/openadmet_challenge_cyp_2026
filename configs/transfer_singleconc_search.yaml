@@ -1,0 +1,249 @@
+# Small, deliberately restricted transfer search around the current best configuration.
+#
+# The declared search space below is documentation only: it is NOT a `search_grid`, so
+# `--grid` cannot expand it into its 648-point Cartesian product. Run this config with
+# `--experiment-matrix`, which launches exactly the named configurations in
+# `experiments:` and nothing else. Each name becomes the run name, so results land in
+# outputs/<experiment>/fold<N>/seed<N>/<name>/ and stay directly comparable.
+#
+# Stage losses: single-concentration pretraining optimizes squared error, the direct
+# pIC50 stage optimizes the official interval-aware loss.
+experiment: transfer_singleconc_search
+pretraining_experiment: singleconc_pretrain_search
+finetune_experiment: singleconc_to_pic50_search
+model:
+  type: dmpnn
+  architecture: cyp_specific_heads
+  message_hidden_dim: 300
+  message_passing_depth: 3
+  dropout: 0.10
+  aggregation: mean
+  ffn_hidden_dim: 300
+  ffn_num_layers: 2
+  ffn_dropout: 0.10
+  head_type: mlp
+  head_layer_norm: false
+data:
+  split_scheme: ecfp_cluster
+  target_normalization: zscore_per_target
+  inner_validation_fold: null
+  cyps: [CYP1A2, CYP2C9, CYP2D6, CYP3A4]
+featurization:
+  policy: fail
+pretraining:
+  loss_mode: standard
+  batch_size: 64
+  max_epochs: 100
+  optimizer: adamw
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  early_stopping_patience: 15
+  gradient_clip_norm: 5.0
+  num_workers: 0
+  selection_metric: macro_MAE
+  metric_direction: minimize
+  precision: auto
+  scheduler: none
+  initial_epoch_estimate_seconds: 420
+  runtime_safety_margin_seconds: 60
+transfer:
+  mode: full
+  require_fold_safe_auxiliary: true
+  initialize_encoder_from_pretraining: true
+  reset_output_heads: true
+  encoder_learning_rate: 1.0e-4
+  head_learning_rate: 1.0e-3
+  batch_size: 64
+  max_epochs: 100
+  early_stopping_patience: 15
+  gradient_clip_norm: 5.0
+  weight_decay: 1.0e-5
+  freeze_encoder_epochs: 10
+  num_workers: 0
+  selection_metric: macro_ST_RAE
+  metric_direction: minimize
+  precision: auto
+  scheduler: none
+  initial_epoch_estimate_seconds: 420
+  runtime_safety_margin_seconds: 60
+  endpoint_refinement:
+    enabled: false
+    encoder_mode: frozen
+    learning_rate: 1.0e-4
+    epochs: 20
+loss:
+  loss_mode: interval_aware
+  weight_clip_min: 0.2
+  weight_clip_max: 5.0
+# Declared axes, recorded for provenance. Not expanded automatically.
+search_space:
+  model.message_hidden_dim: [300, 600, 1024]
+  model.message_passing_depth: [3, 4, 5]
+  model.dropout: [0.05, 0.10, 0.20]
+  model.ffn_hidden_dim: [300, 600]
+  transfer.encoder_learning_rate: [3.0e-5, 1.0e-4, 3.0e-4]
+  transfer.head_learning_rate: [3.0e-4, 1.0e-3]
+  transfer.batch_size: [64, 128]
+# Fourteen scientifically chosen points: one capacity ladder, one regularization
+# sweep at the leading capacity, one optimization sweep, and one head-design probe.
+# Pretraining is launched from this deduplicated list.  Fine-tuning-only changes such
+# as encoder LR and batch size reuse the matching checkpoint through
+# `checkpoint_run_name` instead of repeating an identical deterministic pretraining job.
+pretraining_experiments:
+  - name: pre_h300_d3_ffn300_drop010_mlp
+    overrides: {}
+  - name: pre_h600_d3_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 3
+      model.ffn_hidden_dim: 600
+  - name: pre_h600_d4_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+  - name: pre_h1024_d4_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 1024
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+  - name: pre_h1024_d5_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 1024
+      model.message_passing_depth: 5
+      model.ffn_hidden_dim: 600
+  - name: pre_h600_d4_ffn600_drop005_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      model.dropout: 0.05
+  - name: pre_h600_d4_ffn600_drop020_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      model.dropout: 0.20
+  - name: pre_h600_d4_ffn300_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 300
+  - name: pre_h600_d4_ffn600_drop010_residual
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      model.ffn_num_layers: 3
+      model.head_type: residual_mlp
+  - name: pre_h1024_d5_ffn600_drop020_mlp
+    overrides:
+      model.message_hidden_dim: 1024
+      model.message_passing_depth: 5
+      model.ffn_hidden_dim: 600
+      model.dropout: 0.20
+experiments:
+  - name: h300_d3_reference
+    checkpoint_run_name: pre_h300_d3_ffn300_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 300
+      model.message_passing_depth: 3
+      model.ffn_hidden_dim: 300
+      model.dropout: 0.10
+      transfer.encoder_learning_rate: 1.0e-4
+      transfer.head_learning_rate: 1.0e-3
+      transfer.batch_size: 64
+  - name: h600_d3
+    checkpoint_run_name: pre_h600_d3_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 3
+      model.ffn_hidden_dim: 600
+  - name: h600_d4
+    checkpoint_run_name: pre_h600_d4_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+  - name: h1024_d4
+    checkpoint_run_name: pre_h1024_d4_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 1024
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      transfer.encoder_learning_rate: 5.0e-5
+  - name: h1024_d5
+    checkpoint_run_name: pre_h1024_d5_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 1024
+      model.message_passing_depth: 5
+      model.ffn_hidden_dim: 600
+      transfer.encoder_learning_rate: 5.0e-5
+  - name: h600_d4_drop005
+    checkpoint_run_name: pre_h600_d4_ffn600_drop005_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      model.dropout: 0.05
+  - name: h600_d4_drop020
+    checkpoint_run_name: pre_h600_d4_ffn600_drop020_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      model.dropout: 0.20
+  - name: h600_d4_ffn300
+    checkpoint_run_name: pre_h600_d4_ffn300_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 300
+  - name: h600_d4_enc3e5
+    checkpoint_run_name: pre_h600_d4_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      transfer.encoder_learning_rate: 3.0e-5
+  - name: h600_d4_enc3e4
+    checkpoint_run_name: pre_h600_d4_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      transfer.encoder_learning_rate: 3.0e-4
+  - name: h600_d4_head3e4
+    checkpoint_run_name: pre_h600_d4_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      transfer.head_learning_rate: 3.0e-4
+  - name: h600_d4_bs128
+    checkpoint_run_name: pre_h600_d4_ffn600_drop010_mlp
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      transfer.batch_size: 128
+  - name: h600_d4_residual_head
+    checkpoint_run_name: pre_h600_d4_ffn600_drop010_residual
+    overrides:
+      model.message_hidden_dim: 600
+      model.message_passing_depth: 4
+      model.ffn_hidden_dim: 600
+      model.ffn_num_layers: 3
+      model.head_type: residual_mlp
+  - name: h1024_d5_bs128
+    checkpoint_run_name: pre_h1024_d5_ffn600_drop020_mlp
+    overrides:
+      model.message_hidden_dim: 1024
+      model.message_passing_depth: 5
+      model.ffn_hidden_dim: 600
+      model.dropout: 0.20
+      transfer.encoder_learning_rate: 3.0e-5
+      transfer.head_learning_rate: 3.0e-4
+      transfer.batch_size: 128
+reproducibility:
+  deterministic: true

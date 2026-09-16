@@ -23,6 +23,14 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--grid", action="store_true", help="Expand the config search_grid")
+    parser.add_argument(
+        "--experiment-matrix", action="store_true",
+        help="Run only the explicitly named configurations in the config's experiments list",
+    )
+    parser.add_argument(
+        "--experiment-matrix-section", default="experiments",
+        help="YAML list used by --experiment-matrix (default: experiments)",
+    )
     parser.add_argument("--max-runtime-minutes", type=float, default=50)
     parser.add_argument(
         "--checkpoint-template",
@@ -37,8 +45,12 @@ def main() -> int:
         parser.error("--devices contains duplicate GPU IDs; each GPU worker slot must be unique")
     if len(set(args.folds)) != len(args.folds) or len(set(args.seeds)) != len(args.seeds):
         parser.error("--folds and --seeds must not contain duplicates")
-    grid_combinations = [()]
-    grid_keys: list[str] = []
+    if args.grid and args.experiment_matrix:
+        parser.error("--grid and --experiment-matrix are mutually exclusive")
+    # Each variant is one (run_name, checkpoint_run_name, dotted overrides) job shape,
+    # crossed with folds/seeds.  Distinct fine-tuning variants may intentionally reuse
+    # one architecture-matched pretraining run.
+    variants: list[tuple[str | None, str | None, list[str]]] = [(None, None, [])]
     if args.grid:
         import yaml
 
@@ -49,14 +61,52 @@ def main() -> int:
         if "--run-name" in args.extra:
             parser.error("Do not combine --grid with an explicit --run-name")
         grid_keys = list(search_grid)
-        grid_combinations = list(itertools.product(*(search_grid[key] for key in grid_keys)))
+        variants = [
+            (
+                f"grid{index:03d}",
+                f"grid{index:03d}",
+                [f"{key}={json.dumps(value)}" for key, value in zip(grid_keys, combination)],
+            )
+            for index, combination in enumerate(
+                itertools.product(*(search_grid[key] for key in grid_keys))
+            )
+        ]
+    elif args.experiment_matrix:
+        import yaml
+
+        with args.config.open(encoding="utf-8") as handle:
+            experiments = (yaml.safe_load(handle) or {}).get(args.experiment_matrix_section)
+        if not isinstance(experiments, list) or not experiments:
+            parser.error(
+                "--experiment-matrix requires a nonempty "
+                f"{args.experiment_matrix_section!r} list in the config"
+            )
+        if "--run-name" in args.extra:
+            parser.error("Do not combine --experiment-matrix with an explicit --run-name")
+        variants = []
+        for entry in experiments:
+            if not isinstance(entry, dict) or not entry.get("name"):
+                parser.error("each experiments entry must be a mapping with a name")
+            overrides = entry.get("overrides") or {}
+            if not isinstance(overrides, dict):
+                parser.error(f"experiments entry {entry['name']!r} has non-mapping overrides")
+            variants.append(
+                (
+                    str(entry["name"]),
+                    str(entry.get("checkpoint_run_name", entry["name"])),
+                    [f"{key}={json.dumps(value)}" for key, value in overrides.items()],
+                )
+            )
+        names = [name for name, _checkpoint_name, _overrides in variants]
+        if len(set(names)) != len(names):
+            parser.error(f"experiments names must be unique: {names}")
     launcher = args.output_dir / "launcher_logs" / f"{args.script.stem}_{time.time_ns()}"
     launcher.mkdir(parents=True, exist_ok=True)
     queue = deque(
-        (fold, seed, grid_index, combination)
+        (fold, seed, variant_index, run_name, checkpoint_run_name, overrides)
         for fold in args.folds
         for seed in args.seeds
-        for grid_index, combination in enumerate(grid_combinations)
+        for variant_index, (run_name, checkpoint_run_name, overrides) in enumerate(variants)
     )
     available = deque(args.devices)
     running = {}
@@ -77,8 +127,7 @@ def main() -> int:
         signal.signal(signum, request_stop)
     while queue or running:
         while queue and available and not stop_requested:
-            fold, seed, grid_index, combination = queue.popleft()
-            run_name = f"grid{grid_index:03d}" if args.grid else None
+            fold, seed, variant_index, run_name, checkpoint_run_name, variant_overrides = queue.popleft()
             device_id = available.popleft()
             device = "cpu" if device_id.lower() == "cpu" else f"cuda:{device_id}"
             command = [
@@ -91,31 +140,30 @@ def main() -> int:
                 command.append("--resume")
             if args.checkpoint_template:
                 checkpoint = args.checkpoint_template.format(
-                    fold=fold, seed=seed, grid=grid_index, run_name=run_name or ""
+                    fold=fold, seed=seed, grid=variant_index, run_name=run_name or "",
+                    checkpoint_run_name=checkpoint_run_name or run_name or "",
                 )
                 command.extend(["--checkpoint", checkpoint])
             if run_name:
                 command.extend(["--run-name", run_name])
-            grid_overrides = [
-                f"{key}={json.dumps(value)}"
-                for key, value in zip(grid_keys, combination)
-            ]
-            for override in grid_overrides:
+            for override in variant_overrides:
                 command.extend(["--set", override])
             command.extend(args.extra)
-            grid_suffix = f"_{run_name}" if run_name else ""
-            log_path = launcher / f"fold{fold}_seed{seed}{grid_suffix}_{device_id}.log"
+            variant_suffix = f"_{run_name}" if run_name else ""
+            log_path = launcher / f"fold{fold}_seed{seed}{variant_suffix}_{device_id}.log"
             handle = log_path.open("w", encoding="utf-8")
             process = subprocess.Popen(command, stdout=handle, stderr=subprocess.STDOUT)
             running[process.pid] = (
-                process, handle, device_id, fold, seed, grid_index, grid_overrides,
-                command, log_path,
+                process, handle, device_id, fold, seed, variant_index, run_name,
+                checkpoint_run_name,
+                variant_overrides, command, log_path,
             )
         time.sleep(1)
         for pid, item in list(running.items()):
             (
-                process, handle, device_id, fold, seed, grid_index, grid_overrides,
-                command, log_path,
+                process, handle, device_id, fold, seed, variant_index, run_name,
+                checkpoint_run_name,
+                variant_overrides, command, log_path,
             ) = item
             return_code = process.poll()
             if return_code is None:
@@ -130,8 +178,10 @@ def main() -> int:
             results.append(
                 {
                     "fold": fold, "seed": seed,
-                    "grid_index": grid_index if args.grid else "",
-                    "grid_overrides": " ".join(grid_overrides),
+                    "grid_index": variant_index if args.grid else "",
+                    "run_name": run_name or "",
+                    "checkpoint_run_name": checkpoint_run_name or "",
+                    "grid_overrides": " ".join(variant_overrides),
                     "device": device_id, "return_code": return_code,
                     "status": status,
                     "log": str(log_path), "command": " ".join(command),
