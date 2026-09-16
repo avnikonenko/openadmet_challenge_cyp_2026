@@ -12,8 +12,12 @@ __pycache__/
 .git.openadmet/
 __codex_resume*.md
 
-# Challenge inputs and reproducible derived analysis artifacts
+# Local and challenge datasets
+/data/
+/datasets/
 cyp-challenge-train-test/
+
+# Reproducible derived analysis artifacts
 analysis/**/cache/
 analysis/**/figures/
 analysis/**/tables/
