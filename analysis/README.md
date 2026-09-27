@@ -20,3 +20,8 @@ conda run -n openadmet-cyp-sim python analysis/cyp_pre_model/scripts/run_all.py
 ```
 
 The current interpretation is in `cyp_pre_model/report.md`.
+
+Generated `tables/` and `figures/` are ignored by Git. Links to them in the detailed
+report work after running the analysis locally, but not in the GitHub source view;
+see the self-contained [public summary](../docs/data_analysis_summary.md) for key
+numbers without generated files.

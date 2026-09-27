@@ -76,6 +76,7 @@ redistribution comply with its current license and challenge rules.
 - [Challenge brief](docs/challenge.md): task definition, data audit, and submission contract.
 - [Experiment design](docs/experiment_design.md): original pre-run hypotheses and validation plan (historical draft).
 - [Method report](docs/method_report.md): direct-inhibition ensemble and cross-validation results.
+- [Data analysis summary](docs/data_analysis_summary.md): dataset integrity, 2D/3D chemical space, activity cliffs, and CV rationale.
 
 Run commands from the repository root. For a first CPU check after installing the environment and obtaining the data:
 
