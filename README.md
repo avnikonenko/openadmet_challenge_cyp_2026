@@ -75,6 +75,7 @@ redistribution comply with its current license and challenge rules.
 - [Next-round experiments](docs/experiments.md): model variants, exact commands, and comparison order.
 - [Challenge brief](docs/challenge.md): task definition, data audit, and submission contract.
 - [Experiment design](docs/experiment_design.md): original pre-run hypotheses and validation plan (historical draft).
+- [Method report](docs/method_report.md): direct-inhibition ensemble and cross-validation results.
 
 Run commands from the repository root. For a first CPU check after installing the environment and obtaining the data:
 
