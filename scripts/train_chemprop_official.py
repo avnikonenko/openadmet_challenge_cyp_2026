@@ -108,7 +108,7 @@ def chemprop_command(
 
         if not torch.cuda.is_available():
             raise RuntimeError(f"CUDA requested but unavailable: {normalized}")
-        command.extend(["--accelerator", "gpu", "--devices", normalized.split(":", 1)[1]])
+        command.extend(["--accelerator", "gpu", "--devices", f'{normalized.split(":", 1)[1]},'])
     elif normalized == "cpu":
         command.extend(["--accelerator", "cpu", "--devices", "1"])
     else:
@@ -185,7 +185,7 @@ def main() -> int:
         "--model-paths", str(model_path), "--smiles-columns", "SMILES",
     ]
     if normalize_device(args.device).startswith("cuda"):
-        predict_command.extend(["--accelerator", "gpu", "--devices", normalize_device(args.device).split(":", 1)[1]])
+        predict_command.extend(["--accelerator", "gpu", "--devices", f'{normalize_device(args.device).split(":", 1)[1]},'])
     else:
         predict_command.extend(["--accelerator", "cpu", "--devices", "1"])
     with (run.logs / "chemprop_predict_stdout.log").open("w", encoding="utf-8") as handle:
